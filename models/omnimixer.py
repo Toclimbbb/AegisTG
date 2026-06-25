@@ -9,6 +9,17 @@
 # operations within `__init__` are redacted. The complete, executable module 
 # will be fully open-sourced upon official acceptance.
 # ==============================================================================
+
+import torch
+import torch.nn as nn
+
+class OmniMixer(nn.Module):
+    def __init__(self, in_channels, out_channels, use_freq=True):
+        super(OmniMixer, self).__init__()
+        self.use_freq = use_freq
+        # [REDACTED FOR PEER REVIEW: Layer initializations are abstracted]
+        pass
+
     def forward(self, x):
         """
         Forward pass demonstrating the architectural data flow:
