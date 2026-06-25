@@ -14,22 +14,12 @@
         Forward pass demonstrating the architectural data flow:
         Spatial-Frequency Dual-Domain Synergy.
         """
-        # Step 1: Global context mixing via WaveCore (Frequency Domain)
-        # Non-linear amplitude modulation to reconstruct high-frequency step edges.
         if self.use_freq:
             x = x + self.gamma * self.wave_core(self.norm_freq(x))
-
-        # Step 2: Local context mixing (Spatial Domain)
         y = self.norm_spa(x)
-        
-        # Feature filtering mechanism via GLU (Gated Linear Unit) equivalent
         y_val, y_gate = self.spa_in(y).chunk(2, dim=1)
         y = y_val * torch.sigmoid(y_gate)
-        
-        # Spatial depth-wise convolution and channel attention enhancement
         y = self.spa_dw(y)
         y = y * self.spa_attn(y)
         y = self.spa_out(y)
-
-        # Step 3: Final aggregation and channel alignment
         return self.conv_out(x + self.beta * y)
