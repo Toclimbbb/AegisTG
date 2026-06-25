@@ -1,0 +1,103 @@
+# ==============================================================================
+# AegisTG: Official Configuration (Anonymous Submission for ICIG 2026)
+# ==============================================================================
+
+__include__: [
+  '../base/backbone_base.yml',
+  '../dataset/industrial_logistics_dataset.yml',
+  '../base/detection_base.yml'
+]
+
+output_dir: ./outputs/AegisTG_workspace
+checkpoint_freq: 40
+
+model: AegisTG
+
+AegisTG:
+  yaml_path: configs/aegis_tg_arch.yaml
+  img_dim: 128
+
+
+# [Note]: Optimizer and Scheduler details are simplified for review purposes.
+# Full hyperparameter configurations will be provided upon acceptance.
+optimizer:
+  type: AdamW
+  lr: 0.0008
+  weight_decay: 0.0001
+epoches: 160 
+
+# ------------------------------------------------------------------------------
+# Data Augmentation & Multimodal Inputs
+# ------------------------------------------------------------------------------
+train_dataloader: 
+  total_batch_size: 4
+  dataset: 
+    transforms:
+      ops: 
+        - {type: Mosaic, probability: 1.0}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: Resize, size: [640, 640]}
+        - {type: ModalStack}                          # Core: Stacks RGB and Depth inputs
+        - {type: ConvertBoxes, fmt: 'cxcywh'}
+        - {type: RandomLoadTexts, num_classes: 5}     # Core: Loads textual instructions
+        - {type: LookupTextFeats}                     # Core: Encodes text embeddings
+
+# ------------------------------------------------------------------------------
+# AegisTG Network Architecture (Abstracted Conceptual Flow)
+# ------------------------------------------------------------------------------
+backbone:
+  # 1. Modality Separation
+  - [-1, ModalitySelector, [RGB]]
+  - [-2, ModalitySelector, [Depth]]
+
+  # 2. Early Feature Extraction & Asymmetric Fusion (P2, P3)
+  - [RGB_Stream, StemBlock, [16]]                     
+  - [Depth_Stream, StemBlock, [16]]                   
+  - [[RGB_P2, Depth_P2], RAAF, [32]]                  # -> Contribution 1: Reliability-Aware Asymmetric Fusion
+
+  - [RGB_Stream, StageBlock, [128]]                   
+  - [Depth_Stream, StageBlock, [128]]                 
+  - [[RGB_P3, Depth_P3], RAAF, [128]]                 # -> Applies RAAF to mid-level features
+
+  # 3. Deep Semantic Extraction (P4, P5)
+  - [-1, StageBlock, [256]]                           # -> P4 Features
+  - [-1, StageBlock, [512]]                           # -> P5 Features
+
+encoder:
+  # ------------------------------------------------------------------------------
+  # 4. Frequency-Domain Enhancement (Top-level processing)
+  # ------------------------------------------------------------------------------
+  - [P5_Features, OmniMixer, [128]]                     # -> Contribution 2: Omnidimensional Feature Refinement (Recovers high-freq edges)
+
+  # ------------------------------------------------------------------------------
+  # 5. Top-Down Pathway: Multimodal Cross-Scale Fusion (SyncUpFuse)
+  # ------------------------------------------------------------------------------
+  # Replaces rigid upsampling/concatenation with pixel-level competitive routing
+  - [[P5_Features, P5_Omni], SyncUpFuse, [128]]         # -> Intra-scale synchronization at P5
+  - [[P4_Features, P5_Fused], SyncUpFuse, [128]]        # -> Contribution 3: Top-down fusion (P5 -> P4)
+  - [[P2_Features, P4_Fused], SyncUpFuse, [64]]         # -> Contribution 3: Top-down fusion (P4 -> P2), eradicates scale flooding
+
+  # ------------------------------------------------------------------------------
+  # 6. Bottom-Up Pathway: Feature Aggregation 
+  # ------------------------------------------------------------------------------
+  - [P2_Fused, DownSample, [64, stride=4]]              # -> Route P2 down to P4 resolution
+  - [[Downsampled_P2, P4_Fused], Concat, []]            # -> Aggregate features at P4 level
+  - [-1, ConvFuse, [128]]                               # -> Compress and align P4 channels
+  
+  - [P4_Aggregated, DownSample, [128, stride=2]]        # -> Route P4 down to P5 resolution
+  - [[Downsampled_P4, P5_Fused], Concat, []]            # -> Aggregate features at P5 level
+  - [-1, ConvFuse, [128]]                               # -> Compress and align P5 channels
+
+  # ------------------------------------------------------------------------------
+  # 7. Spatial Refinement & Text-Guided Attention
+  # ------------------------------------------------------------------------------
+  - [P4_Aggregated, RepStageBlock, [128]]               # -> Finalize P4 spatial representations
+  - [-1, TGAttn, [128]]                                 # -> Contribution 4a: Text-Guided Spatial Attention (Filters P4 background)
+
+  - [P5_Aggregated, RepStageBlock, [128]]               # -> Finalize P5 spatial representations
+  - [-1, TGAttn, [128]]                                 # -> Contribution 4a: Text-Guided Spatial Attention (Filters P5 background)
+  
+decoder:
+  # 7. Proposal-Level Grounding Alignment
+  - [[P4_TG, P5_TG], ClassEmbed_Decoder, {num_levels: 2}] # -> Contribution 4b: Dual cosine constraints for alignment
