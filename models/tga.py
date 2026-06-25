@@ -10,7 +10,17 @@
 # will be fully open-sourced upon official acceptance.
 # ==============================================================================
 
-def forward(self, x, g, t, mask=None):
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class TGA(nn.Module):
+    def __init__(self):
+        super(TGA, self).__init__()
+        # [REDACTED FOR PEER REVIEW: Cross-modal projection matrices abstracted]
+        pass
+
+    def forward(self, x, g, t, mask=None):
         """
         Forward pass demonstrating the cascaded text-guided decoding and alignment pipeline:
         Feature-space modulation (TGAttn) and instance-level alignment (ClassEmbed).
