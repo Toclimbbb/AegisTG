@@ -44,60 +44,43 @@ train_dataloader:
         - {type: LookupTextFeats}                     # Core: Encodes text embeddings
 
 # ------------------------------------------------------------------------------
-# AegisTG Network Architecture (Abstracted Conceptual Flow)
+# AegisTG Network Architecture 
 # ------------------------------------------------------------------------------
 backbone:
-  # 1. Modality Separation
-  - [-1, ModalitySelector, [RGB]]
-  - [-2, ModalitySelector, [Depth]]
-
-  # 2. Early Feature Extraction & Asymmetric Fusion (P2, P3)
-  - [RGB_Stream, StemBlock, [16]]                     
-  - [Depth_Stream, StemBlock, [16]]                   
-  - [[RGB_P2, Depth_P2], RAAF, [32]]                  # -> Contribution 1: Reliability-Aware Asymmetric Fusion
-
-  - [RGB_Stream, StageBlock, [128]]                   
-  - [Depth_Stream, StageBlock, [128]]                 
-  - [[RGB_P3, Depth_P3], RAAF, [128]]                 # -> Applies RAAF to mid-level features
-
-  # 3. Deep Semantic Extraction (P4, P5)
-  - [-1, StageBlock, [256]]                           # -> P4 Features
-  - [-1, StageBlock, [512]]                           # -> P5 Features
-
+  - [-1, IdentityInput, []]                          
+  - [-1, ModalitySelector, [1]]                        
+  - [-1, StemBlock, [16, 16, True]]                     
+  - [-1, HG_Stage, [16, 32, 1, 3, False, False, 3, True, 'se']] 
+  - [-1, HG_Stage, [32, 128, 1, 3, True, False, 3, True, 'se']] 
+  - [-5, ModalitySelector, [2]]                         )
+  - [-1, StemBlock, [16, 16, True]]                     
+  - [-1, HG_Stage, [16, 32, 1, 3, False, False, 3, True, 'se']] 
+  - [-1, HG_Stage, [32, 128, 1, 3, True, False, 3, True, 'se']]
+  - [[-6, -2], RAAF, [32]]                          
+  - [-1, SCDown, [32, 3, 2]]                           
+  - [[-7, -3], RAAF, [128]]                            
+  - [[-1, -2], Concat, []]                              
+  - [-1, ConvNormLayer_fuse, [128, 1, 1]]               
+  - [-1, HG_Stage, [32, 256, 2, 3, True, True, 5, True, 'se']]  
+  - [-1, HG_Stage, [64, 512, 1, 3, True, True, 5, True, 'se']]  
 encoder:
-  # ------------------------------------------------------------------------------
-  # 4. Frequency-Domain Enhancement (Top-level processing)
-  # ------------------------------------------------------------------------------
-  - [P5_Features, OmniMixer, [128]]                     # -> Contribution 2: Omnidimensional Feature Refinement (Recovers high-freq edges)
-
-  # ------------------------------------------------------------------------------
-  # 5. Top-Down Pathway: Multimodal Cross-Scale Fusion (SyncUpFuse)
-  # ------------------------------------------------------------------------------
-  # Replaces rigid upsampling/concatenation with pixel-level competitive routing
-  - [[P5_Features, P5_Omni], SyncUpFuse, [128]]         # -> Intra-scale synchronization at P5
-  - [[P4_Features, P5_Fused], SyncUpFuse, [128]]        # -> Contribution 3: Top-down fusion (P5 -> P4)
-  - [[P2_Features, P4_Fused], SyncUpFuse, [64]]         # -> Contribution 3: Top-down fusion (P4 -> P2), eradicates scale flooding
-
-  # ------------------------------------------------------------------------------
-  # 6. Bottom-Up Pathway: Feature Aggregation 
-  # ------------------------------------------------------------------------------
-  - [P2_Fused, DownSample, [64, stride=4]]              # -> Route P2 down to P4 resolution
-  - [[Downsampled_P2, P4_Fused], Concat, []]            # -> Aggregate features at P4 level
-  - [-1, ConvFuse, [128]]                               # -> Compress and align P4 channels
-  
-  - [P4_Aggregated, DownSample, [128, stride=2]]        # -> Route P4 down to P5 resolution
-  - [[Downsampled_P4, P5_Fused], Concat, []]            # -> Aggregate features at P5 level
-  - [-1, ConvFuse, [128]]                               # -> Compress and align P5 channels
-
-  # ------------------------------------------------------------------------------
-  # 7. Spatial Refinement & Text-Guided Attention
-  # ------------------------------------------------------------------------------
-  - [P4_Aggregated, RepStageBlock, [128]]               # -> Finalize P4 spatial representations
-  - [-1, TGAttn, [128]]                                 # -> Contribution 4a: Text-Guided Spatial Attention (Filters P4 background)
-
-  - [P5_Aggregated, RepStageBlock, [128]]               # -> Finalize P5 spatial representations
-  - [-1, TGAttn, [128]]                                 # -> Contribution 4a: Text-Guided Spatial Attention (Filters P5 background)
-  
+  - [-7, ConvNormLayer_fuse, [64, 1, 1]]     
+  - [-3, ConvNormLayer_fuse, [128, 1, 1]]    
+  - [-3, ConvNormLayer_fuse, [128, 1, 1]]       
+  - [-1, OmniMixer, [128, 128]]   
+  - [[-2, -1], SyncUpFuse, [128, 128]]      
+  - [[-4, -1], SyncUpFuse, [128, 128]]      
+  - [[-6, -1], SyncUpFuse, [64, 64]]          
+  - [-1, SCDown, [64, 3, 4, 'silu']]   
+  - [[-1, -3], Concat, []]             
+  - [-1, Conv, [128, 1, 1]]                    
+  - [-1, SCDown, [128, 3, 2, 'silu']]             
+  - [[-1, -7], Concat, []]            
+  - [-1, Conv, [128, 1, 1]]    
+  - [-4, RepNCSPELAN4, [128, 256, 21, 1, False, 'silu']] 
+  - [-1, TGAttn, [128]]                          
+  - [-3, RepNCSPELAN4, [128, 256, 21, 1, False, 'silu']]
+  - [-1, TGAttn, [128]]      
 decoder:
-  # 7. Proposal-Level Grounding Alignment
-  - [[P4_TG, P5_TG], ClassEmbed_Decoder, {num_levels: 2}] # -> Contribution 4b: Dual cosine constraints for alignment
+  - [[-3, -1], AegisTGdecoder, {"feat_strides":[16, 32], "hidden_dim": 128, "num_levels": 2, "num_layers": 3, "dim_feedforward": 512}] 
+
